@@ -1,4 +1,4 @@
-# NiveshMitra 🪙
+# NiveshMitra
 
 NiveshMitra is an empathetic, emotion-aware investment advisor and conversational financial planner for retail investors. It learns a person's goals, time horizon, income, and emotional comfort with market swings through natural conversation, then constructs a personalized, educational asset allocation plan with milestone check-ins.
 
