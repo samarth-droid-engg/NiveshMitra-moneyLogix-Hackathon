@@ -51,6 +51,7 @@ export default function Root() {
 
   function handleLogout() {
     localStorage.removeItem("nm_user");
+    localStorage.removeItem("nm_token");
     api.logout().catch(() => {});
     if (user?.email) localStorage.removeItem(`nm_conversation_${user.email}`);
     setUser(null);

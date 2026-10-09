@@ -4,6 +4,7 @@ import MessageBubble from "./components/MessageBubble.jsx";
 import PlanDashboard from "./components/PlanDashboard.jsx";
 import Logo from "./components/Logo.jsx";
 import LoadingAnimation from "./components/LoadingAnimation.jsx";
+import { SunIcon, MoonIcon, SparkIcon } from "./components/Icons.jsx";
 
 const SUGGESTIONS = [
   "How should I start investing?",
@@ -176,17 +177,17 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
       if (res.emotion?.panicMode) {
         setBanner({
           type: "calm",
-          text: "💛 We noticed you might be stressed. Take a breath: let's not make rushed money decisions.",
+          text: "We noticed you might be experiencing market stress. Take a breath: avoid rushed portfolio decisions.",
         });
       } else if (res.emotion?.fomo) {
         setBanner({
           type: "fomo",
-          text: "⚠️ Excitement can make urgency feel like certainty. Pause, compare it with your goal-based plan, and paper-test before committing real money.",
+          text: "Excitement can make urgency feel like certainty. Compare with your goal-based allocation before committing capital.",
         });
       } else if (res.checkIn) {
         setBanner({
           type: "checkin",
-          text: "🔔 Periodic check-in: how are you feeling about your progress so far?",
+          text: "Periodic check-in: how are you feeling about your progress so far?",
         });
       }
       if (res.planBuilt || res.phase === "advisor") {
@@ -196,7 +197,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
           setHasNewPlan(true);
           setBanner({
             type: "success",
-            text: "🎉 Your personalized plan is ready: tap “View plan” up top to open it!",
+            text: "Your personalized plan is ready: click “View plan” to open it.",
           });
         }
       }
@@ -251,7 +252,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
         }
         aria-pressed={thinkMode}
       >
-        <span className="think-icon">💡</span>
+        <span className="think-icon"><SparkIcon /></span>
         <span className="think-label">Think</span>
       </button>
       <textarea
@@ -288,7 +289,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
                 setHasNewPlan(false);
               }}
             >
-              {dashOpen ? "Hide plan" : "📊 View plan"}
+              {dashOpen ? "Hide plan" : "View plan"}
               {hasNewPlan && !dashOpen && <span className="new-dot" />}
             </button>
           )}
@@ -300,7 +301,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
             }
             aria-label="Toggle theme"
           >
-            {theme === "dark" ? "☀️" : "🌙"}
+            {theme === "dark" ? <SunIcon /> : <MoonIcon />}
           </button>
           <button className="ghost" onClick={startOver}>
             Start over

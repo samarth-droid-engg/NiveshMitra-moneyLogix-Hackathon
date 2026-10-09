@@ -1,4 +1,4 @@
-# NiveshMitra 🪙
+# NiveshMitra
 
 NiveshMitra is an empathetic, emotion-aware investment advisor and conversational financial planner for retail investors. It learns a person's goals, time horizon, income, and emotional comfort with market swings through natural conversation, then constructs a personalized, educational asset allocation plan with milestone check-ins.
 
@@ -127,6 +127,7 @@ Open `http://localhost:5173` in your browser. Vite proxies `/api` calls directly
 
 | Variable | Description |
 | :--- | :--- |
+| `VITE_API_URL` | Render backend API URL (leave empty for local dev proxy) |
 | `VITE_GOOGLE_CLIENT_ID` | Optional client ID for Google Sign-In button |
 
 ---
@@ -165,9 +166,9 @@ NiveshMitra/
 
 ---
 
-## Production Build
+## Production Build & Local Validation
 
-To validate and build for production:
+To validate and build for production locally:
 
 ```powershell
 # Build frontend bundle
@@ -178,3 +179,38 @@ npm run build
 Set-Location ..\backend
 npm start
 ```
+
+---
+
+## Deployment Guide (Render & Vercel)
+
+### 1. Backend on Render (Web Service)
+1. On [Render](https://render.com), click **New + > Web Service**.
+2. Connect your GitHub repository.
+3. Set the following build and run settings:
+   - **Root Directory**: `backend`
+   - **Environment**: `Node`
+   - **Build Command**: `npm install`
+   - **Start Command**: `npm start`
+4. In **Environment Variables**, add:
+   - `AUTH_SECRET`: A long random secret key
+   - `ALLOWED_ORIGINS`: `https://your-frontend.vercel.app` *(update once your Vercel project is live)*
+   - `MONGODB_URI`: Your MongoDB Atlas connection string
+   - `GROQ_API_KEY`: Your Groq API key *(optional, fallback mock mode will activate if not provided)*
+   - `NODE_ENV`: `production`
+5. Click **Create Web Service**. Your backend will be live at `https://<service-name>.onrender.com`.
+
+### 2. Frontend on Vercel
+1. On [Vercel](https://vercel.com), click **Add New... > Project**.
+2. Select your repository.
+3. Configure project settings:
+   - **Framework Preset**: `Vite`
+   - **Root Directory**: `frontend`
+   - **Build Command**: `npm run build`
+   - **Output Directory**: `dist`
+4. Under **Environment Variables**, add:
+   - `VITE_API_URL`: `https://<your-backend-service>.onrender.com`
+   - `VITE_GOOGLE_CLIENT_ID`: (Optional) Your Google OAuth Client ID
+5. Click **Deploy**.
+6. After deployment completes, copy your Vercel URL and add it to `ALLOWED_ORIGINS` in your Render backend settings.
+

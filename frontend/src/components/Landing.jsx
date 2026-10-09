@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import Logo from "./Logo.jsx";
 import InvestmentGrowthChart from "./InvestmentGrowthChart.jsx";
+import { SunIcon, MoonIcon } from "./Icons.jsx";
 
 const STEPS = [
   ["01", "Tell us your goal", "A home, a first SIP, retirement, or simply a clearer starting point."],
@@ -34,7 +35,7 @@ export default function Landing({ theme, onToggleTheme, onStart }) {
             title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
             aria-label="Toggle theme"
           >
-            {theme === "dark" ? "☀️" : "🌙"}
+            {theme === "dark" ? <SunIcon /> : <MoonIcon />}
           </button>
           <button className="cta-btn small btn-asym" onClick={onStart}>
             Get started ↗

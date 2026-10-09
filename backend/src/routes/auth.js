@@ -69,8 +69,10 @@ router.post("/login", async (req, res) => {
     }
 
     setAuthCookie(res, user.email);
+    const token = createAuthToken(user.email);
     return res.status(200).json({
       user: serializeUser(user),
+      token,
     });
   } catch (err) {
     console.error("auth/login error:", err);
@@ -105,8 +107,10 @@ router.post("/register", async (req, res) => {
     }
 
     setAuthCookie(res, user.email);
+    const token = createAuthToken(user.email);
     res.status(201).json({
       user: serializeUser(user),
+      token,
     });
   } catch (err) {
     console.error("auth/register error:", err);
@@ -145,8 +149,10 @@ router.post("/google", async (req, res) => {
     }
 
     setAuthCookie(res, user.email);
+    const token = createAuthToken(user.email);
     return res.status(200).json({
       user: serializeUser(user),
+      token,
     });
   } catch (err) {
     console.error("auth/google error:", err.message);

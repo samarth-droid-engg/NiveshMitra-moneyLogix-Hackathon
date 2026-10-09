@@ -12,17 +12,24 @@ const allowedOrigins = (
   process.env.ALLOWED_ORIGINS || "http://localhost:3000,http://localhost:5173"
 )
   .split(",")
-  .map((origin) => origin.trim())
+  .map((origin) => origin.trim().replace(/\/$/, ""))
   .filter(Boolean);
 
 const app = express();
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin) {
         return callback(null, true);
       }
-      return callback(new Error("Not allowed by CORS"));
+      const cleanOrigin = origin.replace(/\/$/, "");
+      if (
+        allowedOrigins.includes(cleanOrigin) ||
+        allowedOrigins.includes("*")
+      ) {
+        return callback(null, true);
+      }
+      return callback(new Error(`Not allowed by CORS: ${origin}`));
     },
     credentials: true,
   }),

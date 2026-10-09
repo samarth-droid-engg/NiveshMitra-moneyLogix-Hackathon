@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { api } from "../api/client.js";
 import Logo from "./Logo.jsx";
+import { SunIcon, MoonIcon } from "./Icons.jsx";
 
 const GOALS = [
   "Retirement",
@@ -76,7 +77,7 @@ export default function BasicInfo({ theme, onToggleTheme, user, onDone }) {
         }
         aria-label="Toggle theme"
       >
-        {theme === "dark" ? "☀️" : "🌙"}
+        {theme === "dark" ? <SunIcon /> : <MoonIcon />}
       </button>
 
       <form className="auth-card info-card" onSubmit={submit} aria-busy={busy}>

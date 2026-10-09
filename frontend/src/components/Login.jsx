@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "../api/client.js";
 import Logo from "./Logo.jsx";
+import { SunIcon, MoonIcon } from "./Icons.jsx";
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
@@ -99,13 +100,13 @@ export default function Login({ theme, onToggleTheme, onBack, onLogin }) {
         }
         aria-label="Toggle theme"
       >
-        {theme === "dark" ? "☀️" : "🌙"}
+        {theme === "dark" ? <SunIcon /> : <MoonIcon />}
       </button>
 
       <form className="auth-card" onSubmit={submit} aria-busy={busy}>
         <Logo size="lg" className="auth-brand" />
         <h2 className="auth-title">
-          {mode === "register" ? "Create your account" : "Welcome back 👋"}
+          {mode === "register" ? "Create your account" : "Welcome back"}
         </h2>
         <p className="auth-sub">
           {mode === "register"

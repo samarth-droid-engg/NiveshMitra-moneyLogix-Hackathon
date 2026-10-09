@@ -1,11 +1,12 @@
 import React from "react";
+import { AlertIcon, HeartIcon } from "./Icons.jsx";
 
 export default function MessageBubble({ msg }) {
   const isUser = msg.role === "user";
   const emotionLabel = msg.emotion?.fomo
     ? "FOMO check"
     : msg.panicMode
-      ? "Panic check"
+      ? "Calm check"
       : null;
   return (
     <div
@@ -17,7 +18,8 @@ export default function MessageBubble({ msg }) {
       >
         {!isUser && emotionLabel && (
           <div className={`calm-badge ${msg.emotion?.fomo ? "fomo-badge" : ""}`}>
-            {msg.emotion?.fomo ? "⚠️" : "🫶"} {emotionLabel}
+            {msg.emotion?.fomo ? <AlertIcon className="badge-icon" /> : <HeartIcon className="badge-icon" />}
+            <span>{emotionLabel}</span>
           </div>
         )}
         <div className="bubble-text">{msg.content}</div>
