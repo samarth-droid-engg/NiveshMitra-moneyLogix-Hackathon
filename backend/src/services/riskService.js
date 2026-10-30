@@ -10,10 +10,11 @@ const FEAR_SCORE = { low: 0, medium: 15, high: 30 };
  * Higher score = higher risk capacity/appetite.
  */
 export function computeRiskScore(profile) {
+  if (!profile || typeof profile !== "object") return 0;
   let score = 0;
 
   // Horizon: longer horizon -> more risk capacity (max 40 pts).
-  const horizon = Number(profile.horizonYears) || 0;
+  const horizon = Math.max(0, Math.min(60, Number(profile.horizonYears) || 0));
   if (horizon >= 20) score += 40;
   else if (horizon >= 10) score += 30;
   else if (horizon >= 5) score += 18;
@@ -24,10 +25,10 @@ export function computeRiskScore(profile) {
   score += FEAR_SCORE[profile.fearTolerance] ?? 12;
 
   // Investable ratio: how much of income is investable (max 20 pts).
-  const income = Number(profile.monthlyIncome) || 0;
-  const investable = Number(profile.monthlyInvestable) || 0;
+  const income = Math.max(0, Number(profile.monthlyIncome) || 0);
+  const investable = Math.max(0, Number(profile.monthlyInvestable) || 0);
   if (income > 0 && investable > 0) {
-    const ratio = investable / income;
+    const ratio = Math.min(1, investable / income);
     if (ratio >= 0.4) score += 20;
     else if (ratio >= 0.25) score += 14;
     else if (ratio >= 0.15) score += 9;
@@ -47,21 +48,28 @@ export function computeRiskScore(profile) {
 }
 
 export function categorize(score) {
-  if (score <= 30) return "Conservative";
-  if (score <= 55) return "Balanced";
-  if (score <= 80) return "Aggressive";
+  const normalizedScore = Number.isFinite(Number(score))
+    ? Math.max(0, Math.min(100, Number(score)))
+    : 0;
+  if (normalizedScore <= 30) return "Conservative";
+  if (normalizedScore <= 55) return "Balanced";
+  if (normalizedScore <= 80) return "Aggressive";
   return "Growth";
 }
 
 /** Whether we have enough to compute a meaningful score & build a plan. */
 export function isProfileComplete(profile) {
+  const horizon = Number(profile?.horizonYears);
+  const income = Number(profile?.monthlyIncome);
+  const investable = Number(profile?.monthlyInvestable);
   return Boolean(
     profile &&
-    profile.horizonYears != null &&
-    profile.monthlyIncome != null &&
-    profile.monthlyInvestable != null &&
-    profile.fearTolerance != null &&
-    profile.lifeStage != null &&
-    (profile.goals?.length || 0) > 0,
+    Number.isFinite(horizon) && horizon >= 1 && horizon <= 60 &&
+    Number.isFinite(income) && income > 0 &&
+    Number.isFinite(investable) && investable > 0 && investable <= income &&
+    ["low", "medium", "high"].includes(profile.fearTolerance) &&
+    typeof profile.lifeStage === "string" && profile.lifeStage.trim().length > 0 &&
+    Array.isArray(profile.goals) &&
+    profile.goals.some((goal) => typeof goal === "string" && goal.trim()),
   );
 }

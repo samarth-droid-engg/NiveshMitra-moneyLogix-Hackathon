@@ -31,6 +31,14 @@ const groq = MOCK
       timeout: Number(process.env.GROQ_TIMEOUT_MS || 30000),
     });
 
+export class AIProviderError extends Error {
+  constructor(message = "AI provider unavailable.") {
+    super(message);
+    this.name = "AIProviderError";
+    this.status = 503;
+  }
+}
+
 export function isMockMode() {
   return MOCK;
 }
@@ -101,25 +109,22 @@ export async function chatJSON({
     if (parsed && parsed.response_text) {
       return { ...normalize(parsed), _raw: raw, _mock: false };
     }
-    return {
-      response_text:
-        raw ||
-        "Sorry, I had trouble forming a reply. Could you say that again?",
-      detected_emotion: "neutral",
-      risk_signal: "none",
-      confidence: 0.3,
-      profile_updates: {},
-      onboarding_complete: false,
-      _raw: raw,
-      _mock: false,
-    };
+    throw new AIProviderError("The AI provider returned an invalid response.");
   } catch (err) {
-    console.error("Groq call failed:", err.message);
+    console.error(
+      "Groq call failed:",
+      err?.status || "error",
+      process.env.NODE_ENV === "production" ? err?.name || "provider error" : err.message,
+    );
+    if (process.env.NODE_ENV === "production" || err instanceof AIProviderError) {
+      throw err instanceof AIProviderError
+        ? err
+        : new AIProviderError("The AI provider is temporarily unavailable.");
+    }
     return {
       ...mockResponse(userMessage, calmMode, fomoMode),
       response_text:
         "I'm having a little trouble reaching my brain right now — but I'm still here. Want to try again?",
-      _error: err.message,
     };
   }
 }
@@ -175,7 +180,7 @@ async function callGroq({
       return completion.choices?.[0]?.message?.content || "";
     } catch (err) {
       lastErr = err?.message || "unknown error";
-      if (![401, 429, 500, 502, 503, 504].includes(err?.status)) break;
+      if (![429, 500, 502, 503, 504].includes(err?.status)) break;
     }
   }
   throw new Error(lastErr);
@@ -187,7 +192,11 @@ export async function generateConversationTitle(message) {
       systemPrompt: TITLE_GENERATION_SYSTEM_PROMPT,
       userMessage: message,
     });
-    return result?.title || "New Chat";
+    const title = String(result?.title || "")
+      .replace(/[\r\n\t]+/g, " ")
+      .trim()
+      .slice(0, 80);
+    return title || "New Chat";
   } catch (err) {
     console.warn(
       "Conversation title generation failed; using fallback title.",
@@ -208,8 +217,19 @@ function normalize(p) {
       : 0.5;
 
   return {
-    response_text: String(payload.response_text || ""),
-    detected_emotion: payload.detected_emotion || "neutral",
+    response_text: String(payload.response_text || "").trim().slice(0, 20_000),
+    detected_emotion: [
+      "neutral",
+      "excited",
+      "anxious",
+      "fearful",
+      "frustrated",
+      "hopeful",
+      "confused",
+      "panic",
+    ].includes(payload.detected_emotion)
+      ? payload.detected_emotion
+      : "neutral",
     risk_signal: ["none", "low", "medium", "high"].includes(payload.risk_signal)
       ? payload.risk_signal
       : "none",

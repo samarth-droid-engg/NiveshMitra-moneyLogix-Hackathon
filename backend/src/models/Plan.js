@@ -10,6 +10,15 @@ const milestoneSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const allocationSchema = new mongoose.Schema(
+  {
+    asset: { type: String, required: true, maxlength: 120 },
+    percent: { type: Number, required: true, min: 0, max: 100 },
+    examples: { type: [String], default: [] },
+  },
+  { _id: false },
+);
+
 const planSchema = new mongoose.Schema(
   {
     conversationId: { type: String, required: true, unique: true, index: true },
@@ -20,7 +29,23 @@ const planSchema = new mongoose.Schema(
     goalPriority: { type: String, default: "" },
     expectedReturn: { type: String, default: "" },
     monthlySIP: { type: Number, default: null },
-    allocation: { type: Array, default: [] },
+    allocation: {
+      type: [allocationSchema],
+      default: [],
+      validate: {
+        validator: (items) =>
+          Array.isArray(items) &&
+          items.length > 0 &&
+          items.reduce((sum, item) => sum + Number(item.percent || 0), 0) === 100,
+        message: "Portfolio allocation must total exactly 100%.",
+      },
+    },
+    riskScore: { type: Number, min: 0, max: 100, default: null },
+    riskCategory: {
+      type: String,
+      enum: ["Conservative", "Balanced", "Aggressive", "Growth", null],
+      default: null,
+    },
     returnAssumptions: { type: Map, of: Number, default: {} },
     milestones: { type: [milestoneSchema], default: [] },
     disclaimer: { type: String, default: "" },

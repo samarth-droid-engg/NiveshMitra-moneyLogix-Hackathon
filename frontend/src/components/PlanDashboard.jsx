@@ -1,5 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { inr, compact } from "../utils/formatters.js";
+import {
+  allocateMonthlyAmounts,
+  sipFutureValue,
+} from "../utils/finance.js";
 
 const COLORS = [
   "#8ab4f8",
@@ -29,15 +33,8 @@ function assetAnnualReturn(asset = "", assumptions = {}) {
 }
 
 // Future value of a monthly SIP compounded monthly.
-function sipFutureValue(monthly, annualRate, years) {
-  const r = annualRate / 12;
-  const n = years * 12;
-  if (monthly <= 0 || n <= 0) return 0;
-  return monthly * (((Math.pow(1 + r, n) - 1) / r) * (1 + r));
-}
-
 export default function PlanDashboard({ plan, profile }) {
-  const horizon = Number(profile?.horizonYears) || 10;
+  const horizon = Math.max(1, Math.min(60, Number(profile?.horizonYears) || 10));
   const baseSIP = Number(plan?.monthlySIP) || 10000;
   const assumptions = plan?.returnAssumptions || {};
 
@@ -46,12 +43,8 @@ export default function PlanDashboard({ plan, profile }) {
 
   useEffect(() => {
     if (!plan?.allocation) return;
-    const init = {};
-    for (const a of plan.allocation) {
-      init[a.asset] = Math.round((baseSIP * a.percent) / 100);
-    }
-    setAmounts(init);
-  }, [plan?.templateId, baseSIP]);
+    setAmounts(allocateMonthlyAmounts(plan.allocation, baseSIP));
+  }, [plan?.allocation, plan?.templateId, baseSIP]);
 
   const pieData = useMemo(
     () =>
@@ -87,11 +80,7 @@ export default function PlanDashboard({ plan, profile }) {
 
   const resetAmounts = useCallback(() => {
     if (!plan?.allocation) return;
-    const init = {};
-    for (const a of plan.allocation) {
-      init[a.asset] = Math.round((baseSIP * a.percent) / 100);
-    }
-    setAmounts(init);
+    setAmounts(allocateMonthlyAmounts(plan.allocation, baseSIP));
   }, [plan?.allocation, baseSIP]);
 
   if (!plan) {
@@ -206,7 +195,7 @@ export default function PlanDashboard({ plan, profile }) {
                   {simulatedPercent}% simulated · {a.percent}% recommended
                 </span>
               </div>
-              <div className="examples">{a.examples.join(" · ")}</div>
+              <div className="examples">{(a.examples || []).join(" · ")}</div>
 
               <input
                 type="range"
@@ -257,7 +246,7 @@ export default function PlanDashboard({ plan, profile }) {
 
       <h3 className="ms-title">Milestones</h3>
       <ul className="milestones">
-        {plan.milestones.map((m) => (
+        {(plan.milestones || []).map((m) => (
           <li key={m.label}>
             <span className="ms-dot" />
             <div>

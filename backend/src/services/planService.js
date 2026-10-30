@@ -1,7 +1,7 @@
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
-import { computeRiskScore, categorize } from "./riskService.js";
+import { computeRiskScore, categorize, isProfileComplete } from "./riskService.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const portfolios = JSON.parse(
@@ -86,18 +86,15 @@ function buildGoalAllocation(template, policy) {
     /equity|cap|thematic|international|intl|index/i.test(asset);
   const isLiquid = (asset) => /liquid|cash/i.test(asset);
   const isStable = (asset) => /debt|bond|fixed|liquid|cash|gold/i.test(asset);
-  let equity = allocation.reduce(
+  const equity = allocation.reduce(
     (sum, item) => sum + (isEquity(item.asset) ? item.percent : 0),
     0,
   );
-  let shifted = 0;
-
   if (equity > policy.maxEquity) {
     const factor = policy.maxEquity / equity;
     allocation.forEach((item) => {
       if (isEquity(item.asset)) {
         const next = Math.floor(item.percent * factor);
-        shifted += item.percent - next;
         item.percent = next;
       }
     });
@@ -138,7 +135,34 @@ function buildGoalAllocation(template, policy) {
     needed -= transferable;
     });
   }
-  return allocation.filter((item) => item.percent > 0);
+  return normalizeAllocation(allocation.filter((item) => item.percent > 0));
+}
+
+export function normalizeAllocation(allocation) {
+  const normalized = (Array.isArray(allocation) ? allocation : [])
+    .map((item) => ({
+      ...item,
+      asset: String(item?.asset || "").trim(),
+      percent: Math.max(0, Math.round(Number(item?.percent) || 0)),
+      examples: Array.isArray(item?.examples)
+        ? item.examples.map(String).filter(Boolean).slice(0, 10)
+        : [],
+    }))
+    .filter((item) => item.asset && item.percent > 0);
+  if (!normalized.length) throw new Error("Portfolio allocation is empty.");
+
+  const total = normalized.reduce((sum, item) => sum + item.percent, 0);
+  const adjustment = 100 - total;
+  const target = normalized.reduce(
+    (largest, item) => (item.percent > largest.percent ? item : largest),
+    normalized[0],
+  );
+  target.percent += adjustment;
+  if (target.percent < 0) throw new Error("Portfolio allocation is invalid.");
+
+  const finalTotal = normalized.reduce((sum, item) => sum + item.percent, 0);
+  if (finalTotal !== 100) throw new Error("Portfolio allocation must total 100%.");
+  return normalized.filter((item) => item.percent > 0);
 }
 
 /**
@@ -147,12 +171,15 @@ function buildGoalAllocation(template, policy) {
  * @returns {object} plan payload (matches Plan schema)
  */
 export function buildPlan(profile) {
+  if (!isProfileComplete(profile)) {
+    throw new Error("A complete, valid risk profile is required to build a plan.");
+  }
   const riskScore = profile.riskScore ?? computeRiskScore(profile);
   const category = profile.riskCategory ?? categorize(riskScore);
   const template = pickTemplate(riskScore);
 
-  const monthlySIP = Number(profile.monthlyInvestable) || 0;
-  const horizon = Number(profile.horizonYears) || 10;
+  const monthlySIP = Number(profile.monthlyInvestable);
+  const horizon = Number(profile.horizonYears);
   const goal = normalizeGoal(profile);
   const policy = goalPolicy(goal, horizon);
   const allocation = buildGoalAllocation(template, policy);
@@ -163,7 +190,9 @@ export function buildPlan(profile) {
   const n = horizon * 12;
   const fv =
     monthlySIP > 0
-      ? monthlySIP * (((Math.pow(1 + r, n) - 1) / r) * (1 + r))
+      ? r > 0
+        ? monthlySIP * (((Math.pow(1 + r, n) - 1) / r) * (1 + r))
+        : monthlySIP * n
       : 0;
 
   const milestones = buildMilestones(
@@ -257,5 +286,5 @@ function buildMilestones(profile, horizon, sip, fv, policy) {
 }
 
 export function listTemplates() {
-  return portfolios.templates;
+  return structuredClone(portfolios.templates);
 }

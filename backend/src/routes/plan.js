@@ -1,6 +1,10 @@
 import express from "express";
-import mongoose from "mongoose";
-import { getProfileForUser, getPlanForUser } from "../services/store.js";
+import {
+  getProfileForUser,
+  getPlanForUser,
+  savePlan,
+  updateProfile,
+} from "../services/store.js";
 import { listTemplates, buildPlan } from "../services/planService.js";
 import {
   computeRiskScore,
@@ -8,20 +12,12 @@ import {
   isProfileComplete,
 } from "../services/riskService.js";
 import { authenticatedEmail, requireAuth } from "../services/authToken.js";
+import { isSupportedConversationId } from "../services/validation.js";
 
 const router = express.Router();
 
 function getUserEmail(req) {
   return authenticatedEmail(req);
-}
-
-function isSupportedConversationId(value) {
-  return (
-    mongoose.isValidObjectId(value) ||
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-      value,
-    )
-  );
 }
 
 // GET /api/plan/templates/all -> all portfolio templates (for transparency)
@@ -46,6 +42,11 @@ router.get("/:conversationId", async (req, res) => {
     }
 
     let plan = await getPlanForUser(conversationId, email);
+    const allocationTotal = plan?.allocation?.reduce(
+      (sum, item) => sum + Number(item.percent || 0),
+      0,
+    );
+    if (plan && allocationTotal !== 100) plan = null;
 
     if (!plan) {
       const profile = email
@@ -53,10 +54,15 @@ router.get("/:conversationId", async (req, res) => {
         : null;
       if (profile && isProfileComplete(profile)) {
         if (profile.riskScore == null) {
-          profile.riskScore = computeRiskScore(profile);
-          profile.riskCategory = categorize(profile.riskScore);
+          const riskScore = computeRiskScore(profile);
+          await updateProfile(conversationId, {
+            riskScore,
+            riskCategory: categorize(riskScore),
+          });
+          profile.riskScore = riskScore;
+          profile.riskCategory = categorize(riskScore);
         }
-        plan = buildPlan(profile);
+        plan = await savePlan(conversationId, buildPlan(profile));
       }
     }
 
@@ -69,7 +75,7 @@ router.get("/:conversationId", async (req, res) => {
     return res.status(200).json({ plan });
   } catch (err) {
     console.error("plan route error:", err);
-    return res.status(500).json({ error: "Could not load plan." });
+    return res.status(Number(err?.status) || 500).json({ error: "Could not load plan." });
   }
 });
 

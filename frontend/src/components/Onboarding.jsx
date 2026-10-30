@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { api } from "../api/client";
 
 const QUESTIONS = [
   {
@@ -54,8 +53,7 @@ export default function Onboarding({ onDone }) {
     setSaving(true);
     setError("");
     try {
-      await api.saveProfile(answers);
-      onDone();
+      await onDone?.(answers);
     } catch (e) {
       setError(e.message);
     } finally {

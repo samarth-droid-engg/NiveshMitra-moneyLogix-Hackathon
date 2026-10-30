@@ -1,17 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import App from "./App.jsx";
 import Landing from "./components/Landing.jsx";
 import Login from "./components/Login.jsx";
 import BasicInfo from "./components/BasicInfo.jsx";
 import { api } from "./api/client.js";
-
-function readUser() {
-  try {
-    return JSON.parse(localStorage.getItem("nm_user") || "null");
-  } catch {
-    return null;
-  }
-}
 
 // Where a logged-in user should land: chat if basics are done, else the form.
 function homeView(user) {
@@ -20,14 +12,38 @@ function homeView(user) {
 }
 
 export default function Root() {
-  const initialUser = readUser();
   const [theme, setTheme] = useState(
     () => localStorage.getItem("nm_theme") || "dark",
   );
-  const [user, setUser] = useState(initialUser);
-  const [view, setView] = useState(() =>
-    initialUser ? homeView(initialUser) : "landing",
-  );
+  const [user, setUser] = useState(null);
+  const [view, setView] = useState("landing");
+  const [booting, setBooting] = useState(true);
+  const [sessionError, setSessionError] = useState("");
+
+  const restoreSession = useCallback(async () => {
+    setBooting(true);
+    setSessionError("");
+    localStorage.removeItem("nm_token");
+    localStorage.removeItem("nm_user");
+    try {
+      const result = await api.session();
+      setUser(result.user);
+      setView(homeView(result.user));
+    } catch (error) {
+      if (error.status && error.status !== 401) {
+        setSessionError(error.message);
+      } else {
+        setUser(null);
+        setView("landing");
+      }
+    } finally {
+      setBooting(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    restoreSession();
+  }, [restoreSession]);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -37,25 +53,44 @@ export default function Root() {
   const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
 
   function handleLogin(u) {
-    localStorage.setItem("nm_user", JSON.stringify(u));
     setUser(u);
     setView(u.basicInfoComplete ? "chat" : "basicinfo");
   }
 
   function handleBasicInfoDone(u) {
     const merged = { ...u, basicInfoComplete: true };
-    localStorage.setItem("nm_user", JSON.stringify(merged));
     setUser(merged);
     setView("chat");
   }
 
-  function handleLogout() {
-    localStorage.removeItem("nm_user");
-    localStorage.removeItem("nm_token");
-    api.logout().catch(() => {});
+  async function handleLogout() {
+    try {
+      await api.logout();
+    } catch (error) {
+      setSessionError(`Could not sign out securely: ${error.message}`);
+      return;
+    }
     if (user?.email) localStorage.removeItem(`nm_conversation_${user.email}`);
     setUser(null);
     setView("landing");
+  }
+
+  if (booting || sessionError) {
+    return (
+      <div className="auth">
+        <div className="auth-card" role={sessionError ? "alert" : "status"}>
+          <h1 className="auth-title">
+            {sessionError ? "Could not restore your session" : "Opening NiveshMitra…"}
+          </h1>
+          {sessionError && <p className="auth-sub">{sessionError}</p>}
+          {sessionError && (
+            <button className="cta-btn full btn-asym" onClick={restoreSession}>
+              Try again
+            </button>
+          )}
+        </div>
+      </div>
+    );
   }
 
   if (view === "chat" && user) {

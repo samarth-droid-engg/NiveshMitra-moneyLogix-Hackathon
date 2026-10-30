@@ -51,7 +51,7 @@ export default function BasicInfo({ theme, onToggleTheme, user, onDone }) {
     setBusy(true);
     setError("");
     try {
-      const res = await api.saveBasicInfo(user.email, {
+      const res = await api.saveBasicInfo({
         name: name.trim(),
         age,
         city: city.trim(),

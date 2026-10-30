@@ -1,5 +1,6 @@
 import React from "react";
 import { AlertIcon, HeartIcon } from "./Icons.jsx";
+import MarkdownMessage from "./MarkdownMessage.jsx";
 
 export default function MessageBubble({ msg }) {
   const isUser = msg.role === "user";
@@ -22,7 +23,9 @@ export default function MessageBubble({ msg }) {
             <span>{emotionLabel}</span>
           </div>
         )}
-        <div className="bubble-text">{msg.content}</div>
+        <div className="bubble-text">
+          {isUser ? msg.content : <MarkdownMessage>{msg.content}</MarkdownMessage>}
+        </div>
       </div>
     </div>
   );

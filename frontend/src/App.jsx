@@ -1,10 +1,14 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api/client.js";
 import MessageBubble from "./components/MessageBubble.jsx";
 import PlanDashboard from "./components/PlanDashboard.jsx";
 import Logo from "./components/Logo.jsx";
 import LoadingAnimation from "./components/LoadingAnimation.jsx";
 import { SunIcon, MoonIcon, SparkIcon } from "./components/Icons.jsx";
+import {
+  shouldApplyConversationResult,
+  upsertConversation,
+} from "./state/conversations.js";
 
 const SUGGESTIONS = [
   "How should I start investing?",
@@ -27,6 +31,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [conversationLoading, setConversationLoading] = useState(false);
   const [profile, setProfile] = useState(null);
   const [plan, setPlan] = useState(null);
   const [banner, setBanner] = useState(null);
@@ -36,7 +41,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
   );
   const [dashOpen, setDashOpen] = useState(false);
   const [hasNewPlan, setHasNewPlan] = useState(false);
-  const [retryText, setRetryText] = useState("");
+  const [retryRequest, setRetryRequest] = useState(null);
   const [dashWidth, setDashWidth] = useState(() => {
     const saved = Number(localStorage.getItem("nm_dashw"));
     return saved >= 300 ? saved : 440;
@@ -44,6 +49,14 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
   const [dragging, setDragging] = useState(false);
   const scrollRef = useRef(null);
   const layoutRef = useRef(null);
+  const sendLockRef = useRef(false);
+  const activeConversationRef = useRef(conversationId);
+  const loadedConversationRef = useRef(null);
+  const skipConversationLoadRef = useRef(null);
+
+  useEffect(() => {
+    activeConversationRef.current = conversationId;
+  }, [conversationId]);
 
   // Draggable splitter between chat and dashboard.
   useEffect(() => {
@@ -84,7 +97,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
       .catch(() => {});
   }, [user?.email]);
 
-  const refreshConversations = async () => {
+  const refreshConversations = useCallback(async () => {
     setHistoryLoading(true);
     setHistoryError("");
     try {
@@ -95,22 +108,42 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
     } finally {
       setHistoryLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     refreshConversations();
-  }, [user?.email]);
+  }, [refreshConversations, user?.email]);
 
   useEffect(() => {
     let cancelled = false;
-    if (!conversationId || !user?.email) return undefined;
+    if (!conversationId || !user?.email) {
+      setConversationLoading(false);
+      return undefined;
+    }
+    if (skipConversationLoadRef.current === conversationId) {
+      skipConversationLoadRef.current = null;
+      loadedConversationRef.current = conversationId;
+      setConversationLoading(false);
+      return undefined;
+    }
+    const requestedConversationId = conversationId;
+    setConversationLoading(true);
     Promise.all([
-      api.getHistory(conversationId, user.email),
-      api.getProfile(conversationId, user.email),
-      api.getPlan(conversationId, user.email).catch(() => null),
+      api.getHistory(requestedConversationId),
+      api.getProfile(requestedConversationId),
+      api.getPlan(requestedConversationId).catch((error) => {
+        if (error.status === 404) return null;
+        throw error;
+      }),
     ])
       .then(([history, profileResult, planResult]) => {
-        if (cancelled) return;
+        if (
+          cancelled ||
+          !shouldApplyConversationResult(
+            requestedConversationId,
+            activeConversationRef.current,
+          )
+        ) return;
         setMessages(
           (history.messages || []).map((message) => ({
             ...message,
@@ -118,13 +151,25 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
           })),
         );
         setProfile(profileResult.profile);
-        if (planResult?.plan) setPlan(planResult.plan);
+        setPlan(planResult?.plan || null);
+        setBanner(null);
+        setRetryRequest(null);
+        loadedConversationRef.current = requestedConversationId;
       })
-      .catch(() => {
-        if (!cancelled) {
+      .catch((error) => {
+        if (cancelled) return;
+        setBanner({ type: "error", text: error.message });
+        const previousId = loadedConversationRef.current;
+        if (previousId && previousId !== requestedConversationId) {
+          setConversationId(previousId);
+          localStorage.setItem(`nm_conversation_${user.email}`, previousId);
+        } else if (!previousId && error.status === 404) {
           setConversationId(null);
           localStorage.removeItem(`nm_conversation_${user.email}`);
         }
+      })
+      .finally(() => {
+        if (!cancelled) setConversationLoading(false);
       });
     return () => {
       cancelled = true;
@@ -140,7 +185,11 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
 
   async function send(maybeText, isRetry = false) {
     const text = (typeof maybeText === "string" ? maybeText : input).trim();
-    if (!text || loading) return;
+    if (!text || sendLockRef.current || conversationLoading) return;
+    sendLockRef.current = true;
+    const requestId = isRetry && retryRequest?.requestId
+      ? retryRequest.requestId
+      : crypto.randomUUID();
     setInput("");
     if (!isRetry) {
       setMessages((m) => [...m, { id: nextMsgId(), role: "user", content: text }]);
@@ -149,14 +198,14 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
     setBanner(null);
     try {
       const res = await api.sendMessage({
-        email: user.email,
         conversationId,
         message: text,
         thinkMode,
+        requestId,
       });
+      if (!conversationId) skipConversationLoadRef.current = res.conversationId;
       setConversationId(res.conversationId);
       localStorage.setItem(`nm_conversation_${user.email}`, res.conversationId);
-      refreshConversations();
       setMessages((m) => [
         ...m,
         {
@@ -172,8 +221,11 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
           },
         },
       ]);
-      setRetryText("");
+      setRetryRequest(null);
       setProfile(res.profile);
+      if (res.conversation) {
+        setConversations((current) => upsertConversation(current, res.conversation));
+      }
       if (res.emotion?.panicMode) {
         setBanner({
           type: "calm",
@@ -191,8 +243,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
         });
       }
       if (res.planBuilt || res.phase === "advisor") {
-        const p = await api.getPlan(res.conversationId, user.email).catch(() => null);
-        if (p?.plan) setPlan(p.plan);
+        if (res.plan) setPlan(res.plan);
         if (res.planBuilt) {
           setHasNewPlan(true);
           setBanner({
@@ -202,36 +253,46 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
         }
       }
     } catch (err) {
-      setRetryText(text);
+      setRetryRequest({ text, requestId });
+      if (!conversationId && err.body?.conversationId) {
+        skipConversationLoadRef.current = err.body.conversationId;
+        setConversationId(err.body.conversationId);
+        localStorage.setItem(
+          `nm_conversation_${user.email}`,
+          err.body.conversationId,
+        );
+      }
       setBanner({ type: "error", text: err.message });
     } finally {
+      sendLockRef.current = false;
       setLoading(false);
     }
   }
 
   function onKey(e) {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       send();
     }
   }
 
   function startOver() {
+    if (loading || conversationLoading) return;
     setConversationId(null);
     setMessages([]);
     setProfile(null);
     setPlan(null);
     setBanner(null);
+    setRetryRequest(null);
     setHasNewPlan(false);
+    loadedConversationRef.current = null;
     localStorage.removeItem(`nm_conversation_${user.email}`);
   }
 
   function selectConversation(id) {
-    if (id === conversationId) return;
-    setMessages([]);
-    setProfile(null);
-    setPlan(null);
+    if (id === conversationId || loading || conversationLoading) return;
     setBanner(null);
+    setRetryRequest(null);
     setHasNewPlan(false);
     setConversationId(id);
     localStorage.setItem(`nm_conversation_${user.email}`, id);
@@ -265,7 +326,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
       />
       <button
         onClick={send}
-        disabled={loading || !input.trim()}
+        disabled={loading || conversationLoading || !input.trim()}
         aria-label="Send message"
       >
         <span className="send-icon">➤</span>
@@ -303,7 +364,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
           >
             {theme === "dark" ? <SunIcon /> : <MoonIcon />}
           </button>
-          <button className="ghost" onClick={startOver}>
+          <button className="ghost" onClick={startOver} disabled={loading || conversationLoading}>
             Start over
           </button>
           {user && (
@@ -336,12 +397,13 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
                 type="button"
                 className={`history-reload-btn ${historyLoading ? "spinning" : ""}`}
                 onClick={refreshConversations}
+                disabled={historyLoading}
                 title="Reload conversations"
                 aria-label="Reload conversations"
               >
                 ↻
               </button>
-              <button className="history-new" onClick={startOver}>
+              <button className="history-new" onClick={startOver} disabled={loading || conversationLoading}>
                 + New
               </button>
             </div>
@@ -367,6 +429,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
                   }`}
                   key={conversation._id}
                   onClick={() => selectConversation(conversation._id)}
+                  disabled={loading || conversationLoading}
                 >
                   <strong>{conversation.title || "New chat"}</strong>
                   <span>
@@ -379,11 +442,29 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
           )}
         </aside>
         <section className={`chat-panel ${hasStarted ? "" : "empty"}`}>
+          <label className="mobile-history">
+            <span>Conversation</span>
+            <select
+              value={conversationId || ""}
+              disabled={loading || conversationLoading}
+              onChange={(event) => {
+                if (event.target.value) selectConversation(event.target.value);
+                else startOver();
+              }}
+            >
+              <option value="">New conversation</option>
+              {conversations.map((conversation) => (
+                <option value={conversation._id} key={conversation._id}>
+                  {conversation.title || "New chat"}
+                </option>
+              ))}
+            </select>
+          </label>
           {banner && (
             <div className={`banner ${banner.type}`} role={banner.type === "error" ? "alert" : "status"}>
               <span>{banner.text}</span>
-              {banner.type === "error" && retryText && (
-                <button type="button" className="banner-retry" onClick={() => send(retryText, true)} disabled={loading}>
+              {banner.type === "error" && retryRequest && (
+                <button type="button" className="banner-retry" onClick={() => send(retryRequest.text, true)} disabled={loading || conversationLoading}>
                   Try again
                 </button>
               )}
@@ -392,14 +473,21 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
 
           {hasStarted ? (
             <>
-              <div className="messages" ref={scrollRef}>
+              <div className="messages" ref={scrollRef} role="log" aria-live="polite" aria-busy={loading || conversationLoading}>
                 {messages.map((m) => (
                   <MessageBubble key={m.id} msg={m} />
                 ))}
                 {loading && (
                   <div className="bubble-row left">
-                    <div className="bubble ai typing" role="status" aria-label="NiveshMitra is reflecting">
+                    <div className="bubble ai reflecting">
                       <LoadingAnimation variant="inline" label="Reflecting..." />
+                    </div>
+                  </div>
+                )}
+                {conversationLoading && (
+                  <div className="bubble-row left">
+                    <div className="bubble ai reflecting">
+                      <LoadingAnimation variant="inline" label="Loading conversation..." />
                     </div>
                   </div>
                 )}
@@ -432,7 +520,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
                     type="button"
                     className="suggest-chip"
                     onClick={() => send(s)}
-                    disabled={loading}
+                    disabled={loading || conversationLoading}
                   >
                     {s}
                   </button>
@@ -450,9 +538,20 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
             className="resizer"
             onMouseDown={() => setDragging(true)}
             onDoubleClick={() => setDashWidth(440)}
+            onKeyDown={(event) => {
+              if (!["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return;
+              event.preventDefault();
+              if (event.key === "Home") return setDashWidth(440);
+              const max = Math.min(780, (layoutRef.current?.clientWidth || 820) - 380);
+              const delta = event.key === "ArrowLeft" ? 20 : -20;
+              setDashWidth((width) => Math.max(300, Math.min(width + delta, max)));
+            }}
             title="Drag to resize · double-click to reset"
             role="separator"
             aria-orientation="vertical"
+            aria-valuemin={300}
+            aria-valuemax={780}
+            aria-valuenow={Math.round(dashWidth)}
             tabIndex={0}
           >
             <span className="resizer-grip" />

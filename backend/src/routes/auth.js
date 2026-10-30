@@ -1,20 +1,34 @@
 import express from "express";
 import bcrypt from "bcrypt";
 import { OAuth2Client } from "google-auth-library";
-import { createUser, getUser, setUserIdentity } from "../services/store.js";
+import {
+  createUser,
+  getUser,
+  getUserForAuth,
+  incrementUserAuthVersion,
+  setUserIdentity,
+} from "../services/store.js";
 import {
   authenticatedEmail,
-  AUTH_COOKIE,
   authCookieOptions,
-  createAuthToken,
+  createAuthSession,
   requireAuth,
+  requireCsrf,
   serializeAuthCookie,
 } from "../services/authToken.js";
+import {
+  cleanText,
+  normalizeEmail,
+  validateBasicInfo,
+  validatePassword,
+} from "../services/validation.js";
 
 const router = express.Router();
 const googleClient = process.env.GOOGLE_CLIENT_ID
   ? new OAuth2Client(process.env.GOOGLE_CLIENT_ID)
   : null;
+const DUMMY_PASSWORD_HASH =
+  "$2b$12$zdNvcQo8r.PRIz8RiktpeOzp1z2jJYp0s6cRTsZATN6t6vl4wnYr2";
 
 function serializeUser(user) {
   return {
@@ -33,46 +47,42 @@ function serializeUser(user) {
   };
 }
 
-const clean = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
-const isNonEmptyString = (v) => typeof v === "string" && v.trim().length > 0;
-
-function setAuthCookie(res, email) {
+function setAuthCookie(res, user) {
+  const session = createAuthSession(user.email, user.authVersion);
   res.setHeader(
     "Set-Cookie",
-    serializeAuthCookie(createAuthToken(email), authCookieOptions()),
+    serializeAuthCookie(session.token, authCookieOptions()),
   );
+  return session.csrfToken;
 }
 
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    if (!email || !password)
-      return res
-        .status(400)
-        .json({ error: "Email and password are required." });
+    const normalizedEmail = normalizeEmail(email);
+    if (
+      !normalizedEmail ||
+      typeof password !== "string" ||
+      !password ||
+      Buffer.byteLength(password, "utf8") > 72
+    ) {
+      return res.status(400).json({ error: "A valid email and password are required." });
+    }
+    const user = await getUserForAuth(normalizedEmail);
 
-    const normalizedEmail = String(email).trim().toLowerCase();
-    const user = await getUser(normalizedEmail);
-
-    if (!user) {
+    const ok = await bcrypt.compare(
+      String(password),
+      user?.password || DUMMY_PASSWORD_HASH,
+    );
+    if (!user || !user.password || !ok) {
       return res.status(401).json({ error: "Invalid email or password." });
     }
 
-    if (!user.password) {
-      return res.status(401).json({ error: "Invalid email or password." });
-    }
-
-    const ok = await bcrypt.compare(String(password), user.password);
-    if (!ok) {
-      return res.status(401).json({ error: "Invalid email or password." });
-    }
-
-    setAuthCookie(res, user.email);
-    const token = createAuthToken(user.email);
+    const csrfToken = setAuthCookie(res, user);
     return res.status(200).json({
       user: serializeUser(user),
-      token,
+      csrfToken,
     });
   } catch (err) {
     console.error("auth/login error:", err);
@@ -84,12 +94,12 @@ router.post("/register", async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    if (!email || !password)
-      return res
-        .status(400)
-        .json({ error: "Email and password are required." });
-
-    const normalizedEmail = String(email).trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(email);
+    const passwordError = validatePassword(password);
+    if (!normalizedEmail) {
+      return res.status(400).json({ error: "A valid email address is required." });
+    }
+    if (passwordError) return res.status(400).json({ error: passwordError });
     let user = await getUser(normalizedEmail);
 
     if (user) {
@@ -98,7 +108,8 @@ router.post("/register", async (req, res) => {
         .json({ error: "That email is already registered." });
     }
 
-    const hashedPassword = await bcrypt.hash(String(password), 10);
+    const rounds = Math.max(10, Math.min(14, Number(process.env.BCRYPT_ROUNDS || 12)));
+    const hashedPassword = await bcrypt.hash(password, rounds);
     user = await createUser(normalizedEmail, hashedPassword);
     if (!user) {
       return res
@@ -106,15 +117,17 @@ router.post("/register", async (req, res) => {
         .json({ error: "That email is already registered." });
     }
 
-    setAuthCookie(res, user.email);
-    const token = createAuthToken(user.email);
+    const csrfToken = setAuthCookie(res, user);
     res.status(201).json({
       user: serializeUser(user),
-      token,
+      csrfToken,
     });
   } catch (err) {
+    if (err?.code === 11000) {
+      return res.status(409).json({ error: "That email is already registered." });
+    }
     console.error("auth/register error:", err);
-    res.status(500).json({ error: "Could not register you." });
+    return res.status(500).json({ error: "Could not register you." });
   }
 });
 
@@ -131,7 +144,7 @@ router.post("/google", async (req, res) => {
       audience: process.env.GOOGLE_CLIENT_ID,
     });
     const payload = ticket.getPayload();
-    const email = payload?.email?.trim().toLowerCase();
+    const email = normalizeEmail(payload?.email);
 
     if (!email || !payload.email_verified) {
       return res
@@ -140,19 +153,18 @@ router.post("/google", async (req, res) => {
     }
 
     const user = await setUserIdentity(email, {
-      name: payload.name || "Friend",
-      image: payload.picture || null,
+      name: cleanText(payload.name, 100) || "Friend",
+      image: cleanText(payload.picture, 2048) || null,
     });
 
     if (!user) {
       return res.status(500).json({ error: "Could not create your account." });
     }
 
-    setAuthCookie(res, user.email);
-    const token = createAuthToken(user.email);
+    const csrfToken = setAuthCookie(res, user);
     return res.status(200).json({
       user: serializeUser(user),
-      token,
+      csrfToken,
     });
   } catch (err) {
     console.error("auth/google error:", err.message);
@@ -160,15 +172,35 @@ router.post("/google", async (req, res) => {
   }
 });
 
-router.post("/logout", (req, res) => {
-  res.setHeader(
-    "Set-Cookie",
-    serializeAuthCookie("", { ...authCookieOptions(), maxAge: 0 }),
-  );
-  res.status(204).end();
+router.get("/session", requireAuth, async (req, res) => {
+  try {
+    const user = await getUser(authenticatedEmail(req));
+    if (!user) return res.status(401).json({ error: "Session user not found." });
+    return res.status(200).json({
+      user: serializeUser(user),
+      csrfToken: req.auth.csrf,
+    });
+  } catch (err) {
+    console.error("auth/session error:", err.message);
+    return res.status(503).json({ error: "Could not verify your session." });
+  }
 });
 
-router.post("/basic-info", requireAuth, async (req, res) => {
+router.post("/logout", requireAuth, requireCsrf, async (req, res) => {
+  try {
+    await incrementUserAuthVersion(authenticatedEmail(req));
+    res.setHeader(
+      "Set-Cookie",
+      serializeAuthCookie("", { ...authCookieOptions(), maxAge: 0 }),
+    );
+    return res.status(204).end();
+  } catch (err) {
+    console.error("auth/logout error:", err.message);
+    return res.status(Number(err?.status) || 500).json({ error: "Could not sign out." });
+  }
+});
+
+router.post("/basic-info", requireAuth, requireCsrf, async (req, res) => {
   const { name, age, city, occupation, phone, monthlyIncome, goal, email } =
     req.body;
 
@@ -190,35 +222,21 @@ router.post("/basic-info", requireAuth, async (req, res) => {
         .json({ error: "Please sign in before saving your details." });
     }
 
-    if (
-      !isNonEmptyString(name) ||
-      !isNonEmptyString(city) ||
-      !isNonEmptyString(occupation)
-    ) {
-      return res
-        .status(400)
-        .json({ error: "Name, city, and occupation are required." });
-    }
-
-    const ageNum = Number(age);
-    if (!Number.isFinite(ageNum) || ageNum <= 0) {
-      return res.status(400).json({ error: "A valid age is required." });
-    }
-
-    const basicInfoComplete = true;
+    const validated = validateBasicInfo({
+      name,
+      age,
+      city,
+      occupation,
+      phone,
+      monthlyIncome,
+      goal,
+    });
+    if (validated.error) return res.status(400).json({ error: validated.error });
 
     const user = await setUserIdentity(identityEmail, {
-      name: clean(name),
-      age: ageNum,
-      city: clean(city),
-      occupation: clean(occupation),
-      phone: clean(phone),
-      monthlyIncome:
-        Number.isFinite(Number(monthlyIncome)) && Number(monthlyIncome) > 0
-          ? Number(monthlyIncome)
-          : null,
-      goal: clean(goal),
-      basicInfoComplete,
+      ...validated.value,
+      phone: validated.value.phone || null,
+      basicInfoComplete: true,
     });
 
     if (!user) {

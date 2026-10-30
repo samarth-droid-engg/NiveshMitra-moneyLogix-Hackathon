@@ -86,11 +86,13 @@ export default function InvestmentGrowthChart({ className = "" }) {
           {milestones.map((m) => {
             const isSelected = m.years === selectedYears;
             return (
-              <div
+              <button
+                type="button"
                 key={m.years}
                 className={`growth-bar-column ${isSelected ? "selected" : ""}`}
                 onClick={() => setSelectedYears(m.years)}
                 title={`Year ${m.years}: ${formatINR(m.total)}`}
+                aria-pressed={isSelected}
               >
                 <div className="bar-val-tooltip">{formatINR(m.total)}</div>
 
@@ -112,7 +114,7 @@ export default function InvestmentGrowthChart({ className = "" }) {
                 </div>
 
                 <span className="growth-bar-label">Yr {m.years}</span>
-              </div>
+              </button>
             );
           })}
         </div>

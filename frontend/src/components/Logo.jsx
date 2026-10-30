@@ -1,8 +1,13 @@
-import React from "react";
+import React, { useId } from "react";
 
 export default function Logo({ size = "md", showTagline = false, className = "" }) {
   const isLarge = size === "lg";
   const iconSize = isLarge ? 40 : 30;
+  const id = useId().replace(/:/g, "");
+  const borderId = `${id}-border`;
+  const surfaceId = `${id}-surface`;
+  const symbolId = `${id}-symbol`;
+  const glowId = `${id}-glow`;
 
   return (
     <div className={`logo-brand ${isLarge ? "large" : ""} ${className}`.trim()}>
@@ -17,21 +22,21 @@ export default function Logo({ size = "md", showTagline = false, className = "" 
           aria-hidden="true"
         >
           <defs>
-            <linearGradient id="nm-logo-border" x1="0%" y1="0%" x2="100%" y2="100%">
+            <linearGradient id={borderId} x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#FF7D0C" />
               <stop offset="50%" stopColor="#FFA43B" />
               <stop offset="100%" stopColor="#FFE1B9" />
             </linearGradient>
-            <linearGradient id="nm-logo-surface" x1="0%" y1="0%" x2="100%" y2="100%">
+            <linearGradient id={surfaceId} x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#1c1611" />
               <stop offset="100%" stopColor="#0d0d0d" />
             </linearGradient>
-            <linearGradient id="nm-symbol-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <linearGradient id={symbolId} x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#FFE8D1" />
               <stop offset="45%" stopColor="#FFA642" />
               <stop offset="100%" stopColor="#FF7D0C" />
             </linearGradient>
-            <filter id="nm-glow" x="-20%" y="-20%" width="140%" height="140%">
+            <filter id={glowId} x="-20%" y="-20%" width="140%" height="140%">
               <feDropShadow dx="0" dy="0" stdDeviation="2.5" floodColor="#FF7D0C" floodOpacity="0.45" />
             </filter>
           </defs>
@@ -43,17 +48,17 @@ export default function Logo({ size = "md", showTagline = false, className = "" 
             width="37"
             height="37"
             rx="11"
-            fill="url(#nm-logo-surface)"
-            stroke="url(#nm-logo-border)"
+            fill={`url(#${surfaceId})`}
+            stroke={`url(#${borderId})`}
             strokeWidth="1.5"
           />
 
           {/* Compass / Rupee Stems */}
-          <g filter="url(#nm-glow)">
+          <g filter={`url(#${glowId})`}>
             {/* Dynamic Compass / N geometric flow */}
             <path
               d="M13 28V12L23 24V12"
-              stroke="url(#nm-symbol-grad)"
+              stroke={`url(#${symbolId})`}
               strokeWidth="2.75"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -65,10 +70,10 @@ export default function Logo({ size = "md", showTagline = false, className = "" 
       </div>
 
       <div className="logo-text-group">
-        <h1 className="logo-title">
+        <span className="logo-title">
           Nivesh<span className="logo-accent">Mitra</span>
           <span className="logo-dot" />
-        </h1>
+        </span>
         {showTagline && <small className="logo-tagline">your empathetic money companion</small>}
       </div>
     </div>

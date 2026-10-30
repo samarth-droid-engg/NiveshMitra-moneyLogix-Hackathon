@@ -1,5 +1,5 @@
 // Thin data-access layer. Uses MongoDB when connected and an in-memory store
-// otherwise so the app remains usable without a database.
+// otherwise only in local/test environments. Production always fails closed.
 import crypto from "crypto";
 import mongoose from "mongoose";
 import { isDbConnected } from "../config/db.js";
@@ -8,6 +8,7 @@ import ConversationLog from "../models/ConversationLog.js";
 import RiskProfile from "../models/RiskProfile.js";
 import Plan from "../models/Plan.js";
 import User from "../models/User.js";
+import { normalizeEmail } from "./validation.js";
 
 const mem = {
   conversations: new Map(),
@@ -16,8 +17,18 @@ const mem = {
   users: new Map(),
 };
 
-function normalizeEmail(email) {
-  return typeof email === "string" ? email.trim().toLowerCase() : "";
+export class DatabaseUnavailableError extends Error {
+  constructor() {
+    super("Database is temporarily unavailable.");
+    this.name = "DatabaseUnavailableError";
+    this.status = 503;
+  }
+}
+
+function useDatabase() {
+  if (isDbConnected()) return true;
+  if (process.env.NODE_ENV === "production") throw new DatabaseUnavailableError();
+  return false;
 }
 
 function getUserId(user) {
@@ -45,16 +56,46 @@ export async function getUser(email) {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) return null;
 
-  if (isDbConnected()) {
-    try {
-      return await User.findOne({ email: normalizedEmail });
-    } catch (err) {
-      console.error("Error fetching user:", err);
-      return null;
-    }
-  }
+  if (useDatabase()) return User.findOne({ email: normalizedEmail });
 
   return mem.users.get(normalizedEmail) || null;
+}
+
+export async function getUserForAuth(email) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return null;
+  if (useDatabase()) {
+    return User.findOne({ email: normalizedEmail }).select("+password +authVersion");
+  }
+  return mem.users.get(normalizedEmail) || null;
+}
+
+export async function getUserAuthVersion(email) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return null;
+  if (useDatabase()) {
+    const user = await User.findOne({ email: normalizedEmail }).select("+authVersion");
+    return user ? Number(user.authVersion || 0) : null;
+  }
+  const user = mem.users.get(normalizedEmail);
+  return user ? Number(user.authVersion || 0) : null;
+}
+
+export async function incrementUserAuthVersion(email) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return null;
+  if (useDatabase()) {
+    return User.findOneAndUpdate(
+      { email: normalizedEmail },
+      { $inc: { authVersion: 1 } },
+      { new: true },
+    ).select("+authVersion");
+  }
+  const user = mem.users.get(normalizedEmail);
+  if (!user) return null;
+  user.authVersion = Number(user.authVersion || 0) + 1;
+  mem.users.set(normalizedEmail, user);
+  return user;
 }
 
 export async function setUserIdentity(email, info = {}) {
@@ -78,12 +119,12 @@ export async function setUserIdentity(email, info = {}) {
     if (info[k] != null && info[k] !== "") fields[k] = info[k];
   }
 
-  if (isDbConnected()) {
+  if (useDatabase()) {
     return User.findOneAndUpdate(
       { email: normalizedEmail },
       { $set: fields },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
-    );
+      { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true },
+    ).select("+authVersion");
   }
 
   const existing = mem.users.get(normalizedEmail) || {
@@ -107,7 +148,7 @@ export async function createUser(email, password) {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail || !password) return null;
 
-  if (isDbConnected()) {
+  if (useDatabase()) {
     return User.create({
       email: normalizedEmail,
       password,
@@ -133,22 +174,18 @@ export async function createUser(email, password) {
 export async function getConversation(conversationId) {
   if (!conversationId) return null;
 
-  if (isDbConnected()) {
-    try {
-      if (!mongoose.isValidObjectId(conversationId)) return null;
-      return await ConversationLog.findOne({ _id: conversationId });
-    } catch (err) {
-      return null;
-    }
+  if (useDatabase()) {
+    if (!mongoose.isValidObjectId(conversationId)) return null;
+    return ConversationLog.findOne({ _id: conversationId });
   }
 
   return mem.conversations.get(String(conversationId)) || null;
 }
 
 export async function getConversationForUser(conversationId, email) {
+  if (!email) return null;
   const conversation = await getConversation(conversationId);
   if (!conversation) return null;
-  if (!email) return conversation;
 
   const user = await getUser(email);
   if (!user) return null;
@@ -157,22 +194,20 @@ export async function getConversationForUser(conversationId, email) {
 }
 
 export async function getConversationBySlugForUser(slug, email) {
-  if (!slug) return null;
-  const user = email ? await getUser(email) : null;
-  if (email && !user) return null;
+  if (!slug || !email) return null;
+  const user = await getUser(email);
+  if (!user) return null;
 
-  if (isDbConnected()) {
-    const query = { slug };
-    if (user) query.userId = getUserId(user);
-    return ConversationLog.findOne(query);
+  if (useDatabase()) {
+    return ConversationLog.findOne({ slug, userId: getUserId(user) });
   }
 
-  const userId = user ? getUserId(user) : null;
+  const userId = getUserId(user);
   return (
     [...mem.conversations.values()].find(
       (conversation) =>
         conversation.slug === slug &&
-        (!userId || String(conversation.userId) === String(userId)),
+        String(conversation.userId) === String(userId),
     ) || null
   );
 }
@@ -187,7 +222,7 @@ export async function createConversation(email, message) {
     "New Chat";
   const slug = generateSlug(title);
 
-  if (isDbConnected()) {
+  if (useDatabase()) {
     const conversation = await ConversationLog.create({
       userId: getUserId(user),
       slug,
@@ -245,7 +280,7 @@ export async function getAllConversations(email) {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) return [];
 
-  if (isDbConnected()) {
+  if (useDatabase()) {
     const user = await getUser(normalizedEmail);
     if (!user) return [];
 
@@ -283,26 +318,38 @@ export async function getAllConversations(email) {
 }
 
 export async function appendMessages(conversationId, newMessages) {
-  const conversation = await getConversation(conversationId);
-  if (!conversation) return null;
-
-  if (!Array.isArray(conversation.messages)) conversation.messages = [];
-  conversation.messages.push(...newMessages);
-
-  if (isDbConnected()) {
-    await conversation.save();
-    return conversation;
+  if (!Array.isArray(newMessages) || !newMessages.length) return null;
+  if (useDatabase()) {
+    if (!mongoose.isValidObjectId(conversationId)) return null;
+    return ConversationLog.findByIdAndUpdate(
+      conversationId,
+      { $push: { messages: { $each: newMessages } } },
+      { new: true, runValidators: true },
+    );
   }
 
+  const conversation = await getConversation(conversationId);
+  if (!conversation) return null;
+  if (!Array.isArray(conversation.messages)) conversation.messages = [];
+  conversation.messages.push(...newMessages);
+  conversation.updatedAt = new Date().toISOString();
   mem.conversations.set(String(conversationId), conversation);
   return conversation;
 }
 
 export async function updateConversationSummary(conversationId, summary) {
+  const normalizedSummary = String(summary || "").slice(0, 4000);
+  if (useDatabase()) {
+    if (!mongoose.isValidObjectId(conversationId)) return null;
+    return ConversationLog.findByIdAndUpdate(
+      conversationId,
+      { $set: { summary: normalizedSummary } },
+      { new: true },
+    );
+  }
   const conversation = await getConversation(conversationId);
   if (!conversation) return null;
-  conversation.summary = String(summary || "").slice(0, 4000);
-  if (isDbConnected()) return conversation.save();
+  conversation.summary = normalizedSummary;
   mem.conversations.set(String(conversationId), conversation);
   return conversation;
 }
@@ -311,7 +358,7 @@ export async function updateConversationSummary(conversationId, summary) {
 export async function getProfile(conversationId) {
   if (!conversationId) return null;
 
-  if (isDbConnected()) {
+  if (useDatabase()) {
     try {
       if (!mongoose.isValidObjectId(conversationId)) return null;
       let profile = await RiskProfile.findOne({ conversationId });
@@ -320,7 +367,8 @@ export async function getProfile(conversationId) {
       }
       return profile;
     } catch (err) {
-      return null;
+      if (err?.code === 11000) return RiskProfile.findOne({ conversationId });
+      throw err;
     }
   }
 
@@ -354,7 +402,19 @@ export async function updateProfile(conversationId, updates) {
   const profile = await getProfile(conversationId);
   if (!profile) return null;
 
+  const allowedFields = new Set([
+    "goals",
+    "horizonYears",
+    "monthlyIncome",
+    "monthlyInvestable",
+    "fearTolerance",
+    "lifeStage",
+    "riskScore",
+    "riskCategory",
+    "complete",
+  ]);
   for (const [key, value] of Object.entries(updates)) {
+    if (!allowedFields.has(key)) continue;
     if (value === null || value === undefined) continue;
     if (key === "goals" && Array.isArray(value)) {
       const set = new Set([...(profile.goals || []), ...value]);
@@ -364,7 +424,7 @@ export async function updateProfile(conversationId, updates) {
     }
   }
 
-  if (isDbConnected()) {
+  if (useDatabase()) {
     await profile.save();
     return profile;
   }
@@ -375,11 +435,12 @@ export async function updateProfile(conversationId, updates) {
 
 // ---- Plan ----
 export async function savePlan(conversationId, planData) {
-  if (isDbConnected()) {
+  if (useDatabase()) {
     return Plan.findOneAndUpdate({ conversationId }, planData, {
       upsert: true,
       new: true,
       setDefaultsOnInsert: true,
+      runValidators: true,
     });
   }
 
@@ -392,20 +453,16 @@ export async function savePlan(conversationId, planData) {
 export async function getPlan(conversationId) {
   if (!conversationId) return null;
 
-  if (isDbConnected()) {
-    try {
-      if (!mongoose.isValidObjectId(conversationId)) return null;
-      return await Plan.findOne({ conversationId });
-    } catch (err) {
-      return null;
-    }
+  if (useDatabase()) {
+    if (!mongoose.isValidObjectId(conversationId)) return null;
+    return Plan.findOne({ conversationId });
   }
 
   return mem.plans.get(String(conversationId)) || null;
 }
 
 export async function getPlanForUser(conversationId, email) {
-  if (!email) return getPlan(conversationId);
+  if (!email) return null;
   const conversation = await getConversationForUser(conversationId, email);
   if (!conversation) return null;
   return getPlan(conversationId);

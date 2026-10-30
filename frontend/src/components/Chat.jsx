@@ -14,6 +14,7 @@ export default function Chat() {
   const [messages, setMessages] = useState([]); // { role: "user" | "bot", text, emotion? }
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [conversationId, setConversationId] = useState(null);
   const endRef = useRef(null);
 
   useEffect(() => {
@@ -27,7 +28,13 @@ export default function Chat() {
     setInput("");
     setBusy(true);
     try {
-      const { reply, emotion } = await api.chat(message);
+      const result = await api.sendMessage({
+        conversationId,
+        message,
+        requestId: crypto.randomUUID(),
+      });
+      setConversationId(result.conversationId);
+      const { reply, emotion } = result;
       setMessages((m) => [...m, { role: "bot", text: reply, emotion }]);
     } catch (err) {
       setMessages((m) => [...m, { role: "bot", text: `Couldn't reach the assistant: ${err.message}. Try again.` }]);

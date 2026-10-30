@@ -1,25 +1,16 @@
 import express from "express";
-import mongoose from "mongoose";
 import {
   getProfileForUser,
   getConversationForUser,
 } from "../services/store.js";
 import { authenticatedEmail, requireAuth } from "../services/authToken.js";
+import { isSupportedConversationId } from "../services/validation.js";
 
 const router = express.Router();
 router.use(requireAuth);
 
 function getUserEmail(req) {
   return authenticatedEmail(req);
-}
-
-function isSupportedConversationId(value) {
-  return (
-    mongoose.isValidObjectId(value) ||
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-      value,
-    )
-  );
 }
 
 // GET /api/profile/:conversationId/history -> full conversation log
@@ -44,7 +35,7 @@ router.get("/:conversationId/history", async (req, res) => {
 
     return res.status(200).json({ messages: convo.messages || [] });
   } catch (err) {
-    return res.status(500).json({ error: "Could not load history." });
+    return res.status(Number(err?.status) || 500).json({ error: "Could not load history." });
   }
 });
 
@@ -81,7 +72,7 @@ router.get("/:conversationId", async (req, res) => {
       },
     });
   } catch (err) {
-    return res.status(500).json({ error: "Could not load profile." });
+    return res.status(Number(err?.status) || 500).json({ error: "Could not load profile." });
   }
 });
 

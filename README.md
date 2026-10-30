@@ -44,19 +44,19 @@ NiveshMitra is an empathetic, emotion-aware investment advisor and conversationa
 
 * **Frontend:** React 18, Vite, ChaiUI custom token system, CSS Variables.
 * **Backend:** Node.js, Express, Mongoose.
-* **Database:** MongoDB (with automatic in-memory fallback if no database is connected).
+* **Database:** MongoDB. In-memory storage is available only for local/test use; production fails closed if MongoDB is unavailable.
 * **AI Engine:** Groq SDK (`openai/gpt-oss-20b` or `llama-3.3-70b-versatile`), with built-in offline deterministic mock mode.
-* **Authentication:** HTTP-only cookie-based sessions, bcrypt password hashing, optional Google Sign-In.
+* **Authentication:** HTTP-only cookie-based sessions, synchronizer-token CSRF protection, bcrypt password hashing, and optional Google Sign-In.
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
-* Node.js 18 or newer
+* Node.js 20.19 or newer (Node.js 22 LTS recommended)
 * npm
-* Local MongoDB instance or MongoDB Atlas URI (optional; falls back to in-memory)
-* Groq API Key (optional; falls back to offline mock mode)
+* Local MongoDB instance or MongoDB Atlas URI (optional only in local development)
+* Groq API Key (optional only in local development; required in production)
 
 ### 1. Backend Setup
 
@@ -122,6 +122,10 @@ Open `http://localhost:5173` in your browser. Vite proxies `/api` calls directly
 | `GROQ_FALLBACK_MODELS` | Comma-separated fallback models | `llama-3.3-70b-versatile` |
 | `MOCK_LLM` | Force offline deterministic mock mode | `false` |
 | `GOOGLE_CLIENT_ID` | Optional Google OAuth 2.0 client ID | Optional |
+| `BCRYPT_ROUNDS` | Password hashing work factor (10-14) | `12` |
+| `RATE_LIMIT_*` | Global request limiter window and maximum | `60000` / `120` |
+| `AUTH_RATE_LIMIT_*` | Authentication limiter window and maximum | `900000` / `30` |
+| `CHAT_RATE_LIMIT_*` | Chat limiter window and maximum | `60000` / `20` |
 
 ### Frontend (`frontend/.env`)
 
@@ -187,18 +191,22 @@ npm start
 ### 1. Backend on Render (Web Service)
 1. On [Render](https://render.com), click **New + > Web Service**.
 2. Connect your GitHub repository.
-3. Set the following build and run settings:
+3. Set the following build and run settings (or deploy with the repository's `render.yaml` Blueprint):
    - **Root Directory**: `backend`
    - **Environment**: `Node`
-   - **Build Command**: `npm install`
+   - **Build Command**: `npm ci`
    - **Start Command**: `npm start`
 4. In **Environment Variables**, add:
-   - `AUTH_SECRET`: A long random secret key
-   - `ALLOWED_ORIGINS`: `https://your-frontend.vercel.app` *(update once your Vercel project is live)*
+   - `AUTH_SECRET`: At least 32 random characters; use `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`
+   - `AUTH_COOKIE_SAMESITE`: `none` (required for Vercel-to-Render cross-site cookies)
+   - `ALLOWED_ORIGINS`: The exact production Vercel origin, for example `https://your-project.vercel.app`. Do not use `*`.
    - `MONGODB_URI`: Your MongoDB Atlas connection string
-   - `GROQ_API_KEY`: Your Groq API key *(optional, fallback mock mode will activate if not provided)*
+   - `GROQ_API_KEY`: Your Groq API key (required in production)
+   - `GROQ_MODEL`: `openai/gpt-oss-20b` (or another supported Groq model)
+   - `GOOGLE_CLIENT_ID`: Your Google Web client ID if Google Sign-In is enabled
    - `NODE_ENV`: `production`
-5. Click **Create Web Service**. Your backend will be live at `https://<service-name>.onrender.com`.
+5. In MongoDB Atlas, allow Render's outbound access according to your security policy and create a least-privileged database user for this application.
+6. Click **Create Web Service**. Production startup intentionally fails if MongoDB, Groq, the auth secret, or allowed origins are missing.
 
 ### 2. Frontend on Vercel
 1. On [Vercel](https://vercel.com), click **Add New... > Project**.
@@ -212,5 +220,8 @@ npm start
    - `VITE_API_URL`: `https://<your-backend-service>.onrender.com`
    - `VITE_GOOGLE_CLIENT_ID`: (Optional) Your Google OAuth Client ID
 5. Click **Deploy**.
-6. After deployment completes, copy your Vercel URL and add it to `ALLOWED_ORIGINS` in your Render backend settings.
+6. Add the exact deployed Vercel URL to `ALLOWED_ORIGINS` in Render and redeploy the backend if it differs from the anticipated URL.
+7. In Google Cloud, add the same Vercel URL to **Authorized JavaScript origins**. The frontend and backend Google client IDs must match.
+
+For Vercel preview deployments, add only the exact preview origins you intend to test as comma-separated `ALLOWED_ORIGINS`; credentialed CORS deliberately rejects wildcards. After deployment, verify `/api/health` reports `databaseConnected: true` and `mockLLM: false`, then test registration, login, one chat turn, history switching, logout, and a mobile viewport.
 
